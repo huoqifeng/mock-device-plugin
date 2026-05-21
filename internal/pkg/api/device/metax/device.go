@@ -25,4 +25,8 @@ type MetaxConfig struct {
 	ResourceVMemoryName string `yaml:"resourceVMemoryName"`
 	ResourceVCoreName   string `yaml:"resourceVCoreName"`
 	TopologyAware       bool   `yaml:"sgpuTopologyAware"`
+	// Mock mode configuration
+	MockModeSkipHealthCheck bool  `yaml:"mockModeSkipHealthCheck"`
+	DefaultDeviceNum        int32 `yaml:"defaultDeviceNum"`
+	DefaultMemory           int32 `yaml:"defaultMemory"`
 }

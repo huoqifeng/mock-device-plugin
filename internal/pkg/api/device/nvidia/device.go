@@ -18,13 +18,17 @@ package nvidia
 
 import (
 	"errors"
+	"os"
 	"strings"
 
 	"github.com/HAMi/mock-device-plugin/internal/pkg/api/device"
+	"github.com/HAMi/mock-device-plugin/internal/pkg/dynamic"
 	"github.com/HAMi/mock-device-plugin/internal/pkg/mock"
 	"github.com/kubevirt/device-plugin-manager/pkg/dpm"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 )
 
@@ -60,6 +64,10 @@ type NvidiaConfig struct {
 	GPUCorePolicy GPUCoreUtilizationPolicy `yaml:"gpuCorePolicy"`
 	// RuntimeClassName is the name of the runtime class to be added to pod.spec.runtimeClassName
 	RuntimeClassName string `yaml:"runtimeClassName"`
+	// MockModeSkipHealthCheck skips health check in mock mode
+	MockModeSkipHealthCheck bool `yaml:"mockModeSkipHealthCheck"`
+	// DynamicConfigFile path to JSON file for dynamic device configuration
+	DynamicConfigFile string `yaml:"dynamicConfigFile"`
 }
 
 type AllowedMigGeometries struct {
@@ -77,16 +85,56 @@ type NodeDefaultConfig struct {
 }
 
 type NvidiaGPUDevices struct {
-	config         NvidiaConfig
-	ReportedGPUNum int64
+	config          NvidiaConfig
+	ReportedGPUNum  int64
+	dynamicManager  *dynamic.DynamicConfigManager
+	stopDynamicChan chan struct{}
 }
 
 func InitNvidiaDevice(nvconfig NvidiaConfig) *NvidiaGPUDevices {
 	klog.InfoS("initializing nvidia device", "resourceName", nvconfig.ResourceCountName, "resourceMem", nvconfig.ResourceMemoryName, "DefaultGPUNum", nvconfig.DefaultGPUNum)
-	return &NvidiaGPUDevices{
-		config:         nvconfig,
-		ReportedGPUNum: 0,
+
+	dev := &NvidiaGPUDevices{
+		config:          nvconfig,
+		ReportedGPUNum:  0,
+		stopDynamicChan: make(chan struct{}),
 	}
+
+	// Initialize dynamic config manager if dynamic config file is specified
+	if nvconfig.DynamicConfigFile != "" {
+		nodeName := os.Getenv("NODE_NAME")
+		if nodeName == "" {
+			klog.Warning("NODE_NAME env not set, dynamic adjustment will be disabled")
+		} else {
+			// Create in-cluster config
+			config, err := rest.InClusterConfig()
+			if err != nil {
+				klog.Warningf("Failed to create in-cluster config: %v, dynamic adjustment will be disabled", err)
+			} else {
+				clientset, err := kubernetes.NewForConfig(config)
+				if err != nil {
+					klog.Warningf("Failed to create clientset: %v, dynamic adjustment will be disabled", err)
+				} else {
+					dev.dynamicManager = dynamic.NewDynamicConfigManager(
+						nvconfig.DynamicConfigFile,
+						clientset,
+						nodeName,
+					)
+
+					// Load config
+					if err := dev.dynamicManager.LoadConfig(); err != nil {
+						klog.Warningf("Failed to load dynamic config: %v, using defaults", err)
+					} else {
+						// Start auto-adjustment goroutine
+						go dev.dynamicManager.StartAutoAdjustment()
+						klog.Info("Dynamic device adjustment enabled")
+					}
+				}
+			}
+		}
+	}
+
+	return dev
 }
 
 func (dev *NvidiaGPUDevices) CommonWord() string {
@@ -170,19 +218,55 @@ func (dev *NvidiaGPUDevices) GetResource(n *corev1.Node) map[string]int {
 		coreResourceName:     0,
 		memoryPercentageName: 0,
 	}
-	if !device.CheckHealthy(n, dev.config.ResourceCountName) {
-		klog.Infof("device %s is unhealthy on this node", dev.CommonWord())
-		return resourceMap
+
+	// Skip health check in mock mode
+	if !dev.config.MockModeSkipHealthCheck {
+		if !device.CheckHealthy(n, dev.config.ResourceCountName) {
+			klog.Infof("device %s is unhealthy on this node", dev.CommonWord())
+			return resourceMap
+		}
+	} else {
+		klog.V(5).Infof("mock mode enabled, skipping health check for device %s", dev.CommonWord())
 	}
+
 	devs, err := dev.GetNodeDevices(n)
 	if err != nil {
-		klog.Infof("no device %s on this node", NvidiaGPUCommonWord)
-		return resourceMap
-	}
-	for _, val := range devs {
-		resourceMap[memoryResourceName] += int(val.Devmem)
-		resourceMap[coreResourceName] += int(val.Devcore)
-		resourceMap[memoryPercentageName] += 100
+		// In mock mode, generate default devices if annotation not found
+		if dev.config.MockModeSkipHealthCheck && dev.config.DefaultGPUNum > 0 {
+			// Use dynamic config if available
+			deviceCount := int(dev.config.DefaultGPUNum)
+			memoryPerDevice := int(dev.config.DefaultMemory)
+			coresPerDevice := int(dev.config.DefaultCores)
+
+			if dev.dynamicManager != nil {
+				dynConfig := dev.dynamicManager.GetConfig()
+				if dynConfig != nil {
+					deviceCount = dynConfig.DeviceCount
+					memoryPerDevice = dynConfig.MemoryPerDevice
+					coresPerDevice = dynConfig.CoresPerDevice
+					klog.Infof("using dynamic config: %d devices, %d MB memory, %d cores each",
+						deviceCount, memoryPerDevice, coresPerDevice)
+				}
+			}
+
+			klog.Infof("mock mode: generating %d devices with %d MB memory, %d cores each",
+				deviceCount, memoryPerDevice, coresPerDevice)
+
+			for i := 0; i < deviceCount; i++ {
+				resourceMap[memoryResourceName] += memoryPerDevice
+				resourceMap[coreResourceName] += coresPerDevice
+				resourceMap[memoryPercentageName] += 100
+			}
+		} else {
+			klog.Infof("no device %s on this node", NvidiaGPUCommonWord)
+			return resourceMap
+		}
+	} else {
+		for _, val := range devs {
+			resourceMap[memoryResourceName] += int(val.Devmem)
+			resourceMap[coreResourceName] += int(val.Devcore)
+			resourceMap[memoryPercentageName] += 100
+		}
 	}
 	if dev.config.MemoryFactor > 1 {
 		rawMemory := resourceMap[memoryResourceName]

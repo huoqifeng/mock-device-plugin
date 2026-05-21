@@ -39,17 +39,23 @@ const (
 type AMDConfig struct {
 	ResourceCountName  string `yaml:"resourceCountName"`
 	ResourceMemoryName string `yaml:"resourceMemoryName"`
+	// Mock mode configuration
+	MockModeSkipHealthCheck bool  `yaml:"mockModeSkipHealthCheck"`
+	DefaultDeviceNum        int32 `yaml:"defaultDeviceNum"`
+	DefaultMemory           int32 `yaml:"defaultMemory"`
 }
 
 type AMDDevices struct {
 	resourceCountName  string
 	resourceMemoryName string
+	config             AMDConfig
 }
 
 func InitAMDGPUDevice(config AMDConfig) *AMDDevices {
 	return &AMDDevices{
 		resourceCountName:  config.ResourceCountName,
 		resourceMemoryName: config.ResourceMemoryName,
+		config:             config,
 	}
 }
 
@@ -59,6 +65,36 @@ func (dev *AMDDevices) CommonWord() string {
 
 func (dev *AMDDevices) GetNodeDevices(n corev1.Node) ([]*device.DeviceInfo, error) {
 	nodedevices := []*device.DeviceInfo{}
+
+	// In mock mode, generate devices from config
+	if dev.config.MockModeSkipHealthCheck && dev.config.DefaultDeviceNum > 0 {
+		deviceCount := int(dev.config.DefaultDeviceNum)
+		memoryPerDevice := int(dev.config.DefaultMemory)
+		if memoryPerDevice == 0 {
+			memoryPerDevice = Mi300xMemory // Use default
+		}
+
+		klog.Infof("mock mode: generating %d AMD GPU devices with %d MB memory each",
+			deviceCount, memoryPerDevice)
+
+		for i := 0; i < deviceCount; i++ {
+			nodedevices = append(nodedevices, &device.DeviceInfo{
+				Index:        uint(i),
+				ID:           n.Name + "-" + AMDDevice + "-" + fmt.Sprint(i),
+				Count:        1,
+				Devmem:       int32(memoryPerDevice),
+				Devcore:      100,
+				Type:         AMDDevice,
+				Numa:         0,
+				Health:       true,
+				CustomInfo:   make(map[string]any),
+				DeviceVendor: AMDCommonWord,
+			})
+		}
+		return nodedevices, nil
+	}
+
+	// Original logic for real mode
 	i := 0
 	counts, ok := n.Status.Capacity.Name(corev1.ResourceName(dev.resourceCountName), resource.DecimalSI).AsInt64()
 	if !ok || counts == 0 {

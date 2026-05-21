@@ -20,4 +20,8 @@ type MthreadsConfig struct {
 	ResourceCountName  string `yaml:"resourceCountName"`
 	ResourceMemoryName string `yaml:"resourceMemoryName"`
 	ResourceCoreName   string `yaml:"resourceCoreName"`
+	// Mock mode configuration
+	MockModeSkipHealthCheck bool  `yaml:"mockModeSkipHealthCheck"`
+	DefaultDeviceNum        int32 `yaml:"defaultDeviceNum"`
+	DefaultMemory           int32 `yaml:"defaultMemory"`
 }

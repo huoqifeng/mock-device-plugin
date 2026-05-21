@@ -45,15 +45,20 @@ type KunlunConfig struct {
 	ResourceCountName   string `yaml:"resourceCountName"`
 	ResourceVCountName  string `yaml:"resourceVCountName"`
 	ResourceVMemoryName string `yaml:"resourceVMemoryName"`
+	// Mock mode configuration
+	MockModeSkipHealthCheck bool  `yaml:"mockModeSkipHealthCheck"`
+	DefaultDeviceNum        int32 `yaml:"defaultDeviceNum"`
+	DefaultMemory           int32 `yaml:"defaultMemory"`
 }
 
 type KunlunVDevices struct {
+	config KunlunConfig
 }
 
 func InitKunlunVDevice(config KunlunConfig) *KunlunVDevices {
 	KunlunResourceVCount = config.ResourceVCountName
 	KunlunResourceVMemory = config.ResourceVMemoryName
-	return &KunlunVDevices{}
+	return &KunlunVDevices{config: config}
 }
 
 func (dev *KunlunVDevices) CommonWord() string {
@@ -87,11 +92,29 @@ func (dev *KunlunVDevices) GetResource(n *corev1.Node) map[string]int {
 		memoryResourceName: 0,
 		vCountResourceName: 0,
 	}
+
 	devInfos, err := dev.GetNodeDevices(n)
 	if err != nil || len(devInfos) == 0 {
-		klog.Infof("no device %s on this node", dev.CommonWord())
-		return resourceMap
+		// In mock mode, generate default devices
+		if dev.config.MockModeSkipHealthCheck && dev.config.DefaultDeviceNum > 0 {
+			deviceCount := int(dev.config.DefaultDeviceNum)
+			memoryPerDevice := int(dev.config.DefaultMemory)
+			if memoryPerDevice == 0 {
+				memoryPerDevice = 16384 // Default 16GB
+			}
+
+			klog.Infof("mock mode: generating %d Kunlun XPU devices with %d MB memory each",
+				deviceCount, memoryPerDevice)
+
+			resourceMap[memoryResourceName] = memoryPerDevice * deviceCount
+			resourceMap[vCountResourceName] = deviceCount
+			return resourceMap
+		} else {
+			klog.Infof("no device %s on this node", dev.CommonWord())
+			return resourceMap
+		}
 	}
+
 	for _, val := range devInfos {
 		resourceMap[vCountResourceName] += int(val.Devcore)
 		resourceMap[memoryResourceName] += int(val.Devmem)

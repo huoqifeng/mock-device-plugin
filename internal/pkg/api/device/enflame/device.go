@@ -31,6 +31,7 @@ import (
 
 type EnflameDevices struct {
 	factor int
+	config EnflameConfig
 }
 
 type EnflameConfig struct {
@@ -40,6 +41,9 @@ type EnflameConfig struct {
 	// Shared-GCU
 	ResourceNameVGCU           string `yaml:"resourceNameVGCU"`
 	ResourceNameVGCUPercentage string `yaml:"resourceNameVGCUPercentage"`
+	// Mock mode configuration
+	MockModeSkipHealthCheck bool  `yaml:"mockModeSkipHealthCheck"`
+	DefaultDeviceNum        int32 `yaml:"defaultDeviceNum"`
 }
 
 const (
@@ -69,6 +73,7 @@ func InitEnflameDevice(config EnflameConfig) *EnflameDevices {
 	EnflameResourceNameVGCUPercentage = config.ResourceNameVGCUPercentage
 	return &EnflameDevices{
 		factor: 0,
+		config: config,
 	}
 }
 
@@ -78,6 +83,28 @@ func (dev *EnflameDevices) CommonWord() string {
 
 func (dev *EnflameDevices) GetNodeDevices(n corev1.Node) ([]*device.DeviceInfo, error) {
 	nodedevices := []*device.DeviceInfo{}
+
+	// In mock mode, generate devices from config
+	if dev.config.MockModeSkipHealthCheck && dev.config.DefaultDeviceNum > 0 {
+		deviceCount := int(dev.config.DefaultDeviceNum)
+
+		for i := 0; i < deviceCount; i++ {
+			nodedevices = append(nodedevices, &device.DeviceInfo{
+				Index:        uint(i),
+				ID:           n.Name + "-enflame-" + fmt.Sprint(i),
+				Count:        100,
+				Devmem:       100,
+				Devcore:      100,
+				Type:         EnflameVGCUDevice,
+				Numa:         0,
+				Health:       true,
+				DeviceVendor: EnflameVGCUCommonWord,
+			})
+		}
+		return nodedevices, nil
+	}
+
+	// Original logic
 	i := 0
 	cards, ok := n.Status.Capacity.Name(corev1.ResourceName(CountNoSharedName), resource.DecimalSI).AsInt64()
 	if !ok || cards == 0 {

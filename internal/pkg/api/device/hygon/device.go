@@ -32,9 +32,16 @@ type HygonConfig struct {
 	ResourceMemoryName string `yaml:"resourceMemoryName"`
 	ResourceCoreName   string `yaml:"resourceCoreName"`
 	MemoryFactor       int32  `yaml:"memoryFactor"`
+	// Mock mode configuration
+	MockModeSkipHealthCheck bool   `yaml:"mockModeSkipHealthCheck"`
+	DefaultDeviceNum        int32  `yaml:"defaultDeviceNum"`
+	DefaultMemory           int32  `yaml:"defaultMemory"`
+	DynamicConfigFile       string `yaml:"dynamicConfigFile"`
 }
 
 type DCUDevices struct {
+	config         HygonConfig
+	dynamicManager interface{}
 }
 
 var (
@@ -55,7 +62,10 @@ func InitDCUDevice(config HygonConfig) *DCUDevices {
 	HygonResourceMemory = config.ResourceMemoryName
 	HygonResourceCores = config.ResourceCoreName
 	MemoryFactor = config.MemoryFactor
-	return &DCUDevices{}
+
+	return &DCUDevices{
+		config: config,
+	}
 }
 
 func (dev *DCUDevices) CommonWord() string {
@@ -86,20 +96,44 @@ func (dev *DCUDevices) GetNodeDevices(n *corev1.Node) ([]*device.DeviceInfo, err
 
 func (dev *DCUDevices) GetResource(n *corev1.Node) map[string]int {
 	memoryResourceName := device.GetResourceName(HygonResourceMemory)
+	coreResourceName := device.GetResourceName(HygonResourceCores)
 	resourceMap := map[string]int{
 		memoryResourceName: 0,
 	}
-	if !device.CheckHealthy(n, HygonResourceCount) {
-		klog.Infof("device %s is unhealthy on this node", dev.CommonWord())
-		return resourceMap
+
+	// Skip health check in mock mode
+	if !dev.config.MockModeSkipHealthCheck {
+		if !device.CheckHealthy(n, HygonResourceCount) {
+			klog.Infof("device %s is unhealthy on this node", dev.CommonWord())
+			return resourceMap
+		}
+	} else {
+		klog.V(5).Infof("mock mode enabled, skipping health check for device %s", dev.CommonWord())
 	}
+
 	devs, err := dev.GetNodeDevices(n)
 	if err != nil {
-		klog.Infof("no device %s on this node", dev.CommonWord())
-		return resourceMap
-	}
-	for _, val := range devs {
-		resourceMap[memoryResourceName] += int(val.Devmem)
+		// In mock mode, generate default devices if annotation not found
+		if dev.config.MockModeSkipHealthCheck && dev.config.DefaultDeviceNum > 0 {
+			deviceCount := int(dev.config.DefaultDeviceNum)
+			memoryPerDevice := int(dev.config.DefaultMemory)
+			coresPerDevice := 30 // Default cores
+
+			klog.Infof("mock mode: generating %d DCU devices with %d MB memory each",
+				deviceCount, memoryPerDevice)
+
+			resourceMap[memoryResourceName] = memoryPerDevice * deviceCount
+			if coreResourceName != "" {
+				resourceMap[coreResourceName] = coresPerDevice * deviceCount
+			}
+		} else {
+			klog.Infof("no device %s on this node", dev.CommonWord())
+			return resourceMap
+		}
+	} else {
+		for _, val := range devs {
+			resourceMap[memoryResourceName] += int(val.Devmem)
+		}
 	}
 	if MemoryFactor > 1 {
 		rawMemory := resourceMap[memoryResourceName]

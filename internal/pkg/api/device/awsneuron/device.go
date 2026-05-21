@@ -46,6 +46,9 @@ const (
 type AWSNeuronConfig struct {
 	ResourceCountName string `yaml:"resourceCountName"`
 	ResourceCoreName  string `yaml:"resourceCoreName"`
+	// Mock mode configuration
+	MockModeSkipHealthCheck bool  `yaml:"mockModeSkipHealthCheck"`
+	DefaultDeviceNum        int32 `yaml:"defaultDeviceNum"`
 }
 
 type AWSNeuronDevices struct {
@@ -53,6 +56,7 @@ type AWSNeuronDevices struct {
 	resourceCoreName  string
 	coresPerAWSNeuron uint
 	coremask          uint
+	config            AWSNeuronConfig
 }
 
 func InitAWSNeuronDevice(config AWSNeuronConfig) *AWSNeuronDevices {
@@ -61,6 +65,7 @@ func InitAWSNeuronDevice(config AWSNeuronConfig) *AWSNeuronDevices {
 		resourceCoreName:  config.ResourceCoreName,
 		coresPerAWSNeuron: 0,
 		coremask:          0,
+		config:            config,
 	}
 }
 
@@ -70,6 +75,36 @@ func (dev *AWSNeuronDevices) CommonWord() string {
 
 func (dev *AWSNeuronDevices) GetNodeDevices(n corev1.Node) ([]*device.DeviceInfo, error) {
 	nodedevices := []*device.DeviceInfo{}
+
+	// In mock mode, generate devices from config
+	if dev.config.MockModeSkipHealthCheck && dev.config.DefaultDeviceNum > 0 {
+		deviceCount := int(dev.config.DefaultDeviceNum)
+		coresPerDevice := 4 // Default cores per neuron device
+
+		klog.Infof("mock mode: generating %d AWS Neuron devices with %d cores each",
+			deviceCount, coresPerDevice)
+
+		customInfo := map[string]any{}
+		customInfo[AWSNodeType] = "mock-instance"
+
+		for i := 0; i < deviceCount; i++ {
+			nodedevices = append(nodedevices, &device.DeviceInfo{
+				Index:        uint(i),
+				ID:           n.Name + "-" + AWSNeuronDevice + "-" + fmt.Sprint(i),
+				Count:        int32(coresPerDevice),
+				Devmem:       0,
+				Devcore:      int32(coresPerDevice),
+				Type:         AWSNeuronDevice,
+				Numa:         0,
+				Health:       true,
+				CustomInfo:   customInfo,
+				DeviceVendor: AWSNeuronCommonWord,
+			})
+		}
+		return nodedevices, nil
+	}
+
+	// Original logic
 	i := 0
 	counts, ok := n.Status.Capacity.Name(corev1.ResourceName(dev.resourceCountName), resource.DecimalSI).AsInt64()
 	if !ok || counts == 0 {

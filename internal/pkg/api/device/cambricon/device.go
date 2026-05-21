@@ -29,6 +29,10 @@ type CambriconConfig struct {
 	ResourceCountName  string `yaml:"resourceCountName"`
 	ResourceMemoryName string `yaml:"resourceMemoryName"`
 	ResourceCoreName   string `yaml:"resourceCoreName"`
+	// Mock mode configuration
+	MockModeSkipHealthCheck bool  `yaml:"mockModeSkipHealthCheck"`
+	DefaultDeviceNum        int32 `yaml:"defaultDeviceNum"`
+	DefaultMemory           int32 `yaml:"defaultMemory"`
 }
 
 const (
@@ -47,13 +51,14 @@ var (
 )
 
 type CambriconDevices struct {
+	config CambriconConfig
 }
 
 func InitMLUDevice(config CambriconConfig) *CambriconDevices {
 	MLUResourceCount = config.ResourceCountName
 	MLUResourceMemory = config.ResourceMemoryName
 	MLUResourceCores = config.ResourceCoreName
-	return &CambriconDevices{}
+	return &CambriconDevices{config: config}
 }
 
 func (dev *CambriconDevices) CommonWord() string {
@@ -62,6 +67,32 @@ func (dev *CambriconDevices) CommonWord() string {
 
 func (dev *CambriconDevices) GetNodeDevices(n corev1.Node) ([]*device.DeviceInfo, error) {
 	nodedevices := []*device.DeviceInfo{}
+
+	// In mock mode, generate devices from config
+	if dev.config.MockModeSkipHealthCheck && dev.config.DefaultDeviceNum > 0 {
+		deviceCount := int(dev.config.DefaultDeviceNum)
+		memoryPerDevice := int(dev.config.DefaultMemory)
+		if memoryPerDevice == 0 {
+			memoryPerDevice = 16384 // Default 16GB
+		}
+
+		for i := 0; i < deviceCount; i++ {
+			nodedevices = append(nodedevices, &device.DeviceInfo{
+				Index:        uint(i),
+				ID:           n.Name + "-cambricon-mlu-" + fmt.Sprint(i),
+				Count:        100,
+				Devmem:       int32(memoryPerDevice),
+				Devcore:      100,
+				Type:         CambriconMLUDevice,
+				Numa:         0,
+				Health:       true,
+				DeviceVendor: CambriconMLUCommonWord,
+			})
+		}
+		return nodedevices, nil
+	}
+
+	// Original logic
 	i := 0
 	cards, ok := n.Status.Capacity.Name(corev1.ResourceName(MLUResourceCores), resource.DecimalSI).AsInt64()
 	if !ok || cards == 0 {

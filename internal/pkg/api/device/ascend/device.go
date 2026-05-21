@@ -47,6 +47,10 @@ type VNPUConfig struct {
 	AICore             int32      `yaml:"aiCore"`
 	AICPU              int32      `yaml:"aiCPU"`
 	Templates          []Template `yaml:"templates"`
+	// Mock mode configuration
+	MockModeSkipHealthCheck bool  `yaml:"mockModeSkipHealthCheck"`
+	DefaultDeviceNum        int32 `yaml:"defaultDeviceNum"`
+	DefaultMemory           int32 `yaml:"defaultMemory"`
 }
 
 type Devices struct {
@@ -100,15 +104,38 @@ func (dev *Devices) GetResource(n *corev1.Node) map[string]int {
 	resourceMap := map[string]int{
 		resourceName: 0,
 	}
-	if !device.CheckHealthy(n, dev.config.ResourceName) {
-		klog.Infof("device %s is unhealthy on this node", dev.CommonWord())
-		return resourceMap
+
+	// Skip health check in mock mode
+	if !dev.config.MockModeSkipHealthCheck {
+		if !device.CheckHealthy(n, dev.config.ResourceName) {
+			klog.Infof("device %s is unhealthy on this node", dev.CommonWord())
+			return resourceMap
+		}
+	} else {
+		klog.V(5).Infof("mock mode enabled, skipping health check for device %s", dev.CommonWord())
 	}
+
 	devInfos, err := dev.GetNodeDevices(n)
 	if err != nil || len(devInfos) == 0 {
-		klog.Infof("no device %s on this node", dev.config.CommonWord)
-		return resourceMap
+		// In mock mode, generate default devices
+		if dev.config.MockModeSkipHealthCheck && dev.config.DefaultDeviceNum > 0 {
+			deviceCount := int(dev.config.DefaultDeviceNum)
+			memoryPerDevice := int(dev.config.DefaultMemory)
+			if memoryPerDevice == 0 {
+				memoryPerDevice = int(dev.config.MemoryCapacity)
+			}
+
+			klog.Infof("mock mode: generating %d Ascend NPU devices with %d MB memory each",
+				deviceCount, memoryPerDevice)
+
+			resourceMap[resourceName] = memoryPerDevice * deviceCount
+			return resourceMap
+		} else {
+			klog.Infof("no device %s on this node", dev.config.CommonWord)
+			return resourceMap
+		}
 	}
+
 	for _, val := range devInfos {
 		resourceMap[resourceName] += int(val.Devmem)
 	}
