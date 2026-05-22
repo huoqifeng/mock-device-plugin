@@ -39,6 +39,11 @@ const (
 	NvidiaGPUCommonWord  = "GPU"
 	Vendor               = "nvidia.com"
 	MigMode              = "mig"
+
+	// Volcano GPU Sharing resource names
+	VolcanoGPUResource = "volcano.sh/gpu-memory"
+	VolcanoGPUNumber   = "volcano.sh/gpu-number"
+	VolcanoGPUIndex    = "volcano.sh/gpu-index"
 )
 
 type LibCudaLogLevel string
@@ -217,6 +222,9 @@ func (dev *NvidiaGPUDevices) GetResource(n *corev1.Node) map[string]int {
 		memoryResourceName:   0,
 		coreResourceName:     0,
 		memoryPercentageName: 0,
+		// Add Volcano GPU Sharing resources
+		VolcanoGPUResource: 0,
+		VolcanoGPUNumber:   0,
 	}
 
 	// Skip health check in mock mode
@@ -256,7 +264,11 @@ func (dev *NvidiaGPUDevices) GetResource(n *corev1.Node) map[string]int {
 				resourceMap[memoryResourceName] += memoryPerDevice
 				resourceMap[coreResourceName] += coresPerDevice
 				resourceMap[memoryPercentageName] += 100
+				// Add Volcano GPU resources
+				resourceMap[VolcanoGPUResource] += memoryPerDevice
 			}
+			// Set Volcano GPU number (total GPU count)
+			resourceMap[VolcanoGPUNumber] = deviceCount
 		} else {
 			klog.Infof("no device %s on this node", NvidiaGPUCommonWord)
 			return resourceMap
@@ -266,11 +278,17 @@ func (dev *NvidiaGPUDevices) GetResource(n *corev1.Node) map[string]int {
 			resourceMap[memoryResourceName] += int(val.Devmem)
 			resourceMap[coreResourceName] += int(val.Devcore)
 			resourceMap[memoryPercentageName] += 100
+			// Add Volcano GPU resources
+			resourceMap[VolcanoGPUResource] += int(val.Devmem)
 		}
+		// Set Volcano GPU number (total GPU count)
+		resourceMap[VolcanoGPUNumber] = len(devs)
 	}
 	if dev.config.MemoryFactor > 1 {
 		rawMemory := resourceMap[memoryResourceName]
 		resourceMap[memoryResourceName] /= int(dev.config.MemoryFactor)
+		// Also apply factor to Volcano resource
+		resourceMap[VolcanoGPUResource] = resourceMap[memoryResourceName]
 		klog.InfoS("Update memory", "raw", rawMemory, "after", resourceMap[memoryResourceName], "factor", dev.config.MemoryFactor)
 	}
 	klog.InfoS("Add resources",
@@ -280,6 +298,10 @@ func (dev *NvidiaGPUDevices) GetResource(n *corev1.Node) map[string]int {
 		resourceMap[coreResourceName],
 		memoryPercentageName,
 		resourceMap[memoryPercentageName],
+		"volcano.sh/gpu-memory",
+		resourceMap[VolcanoGPUResource],
+		"volcano.sh/gpu-number",
+		resourceMap[VolcanoGPUNumber],
 	)
 	return resourceMap
 }
