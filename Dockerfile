@@ -1,8 +1,16 @@
-FROM golang:1.21-bullseye AS gobuild
-ADD . /device-plugin
-RUN cd /device-plugin && go build -o ./k8s-device-plugin cmd/k8s-device-plugin/main.go
+# Use local golang:1.20 image for building
+FROM golang:1.20 AS builder
 
-FROM ubuntu:20.04
+ARG GOARCH=amd64
+
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} go build -a -o device-plugin ./cmd/k8s-device-plugin
+
+# Use alpine as base image
+FROM alpine:latest
 WORKDIR /root/
-COPY --from=gobuild /device-plugin/k8s-device-plugin .
-CMD ["./k8s-device-plugin", "-logtostderr=true", "-stderrthreshold=INFO", "-v=5", "--device-config-file=/device-config.yaml"]
+COPY --from=builder /workspace/device-plugin .
+ENTRYPOINT ["./device-plugin"]

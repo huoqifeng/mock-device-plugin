@@ -1,33 +1,34 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: hami-mock-device-plugin-daemonset
+  name: mock-device-plugin
   namespace: kube-system
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/component: hami-mock-device-plugin
+      app.kubernetes.io/component: mock-device-plugin
   template:
     metadata:
       annotations:
         scheduler.alpha.kubernetes.io/critical-pod: ""
       labels:
-        app.kubernetes.io/component: hami-mock-device-plugin
+        app.kubernetes.io/component: mock-device-plugin
     spec:
-      serviceAccountName: hami-mock-device-plugin
+      serviceAccountName: mock-device-plugin
       tolerations:
       - key: CriticalAddonsOnly
         operator: Exists
       containers:
-      - image: projecthami/mock-device-plugin:latest 
-        name: hami-mock-dp-cntr
+      - image: mock-device-plugin:latest
+        imagePullPolicy: IfNotPresent
+        name: mock-device-plugin
         env:
           - name: NODE_NAME
             valueFrom:
               fieldRef:
                 fieldPath: spec.nodeName
         command:
-          - ./k8s-device-plugin
+          - ./device-plugin
           - -v=5
           - --device-config-file=/device-config.yaml
         volumeMounts:
@@ -47,5 +48,5 @@ spec:
             path: /sys
         - name: device-config
           configMap:
-            name: hami-scheduler-device
+            name: mock-scheduler-device
 
