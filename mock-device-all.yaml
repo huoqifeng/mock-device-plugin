@@ -31,7 +31,7 @@ data:
       defaultDeviceNum: 2
       defaultMemory: 192000
     
-    ascend:
+    vnpus:
       - commonWord: Ascend910
         chipName: Ascend910
         resourceName: huawei.com/Ascend910
@@ -128,7 +128,7 @@ spec:
     spec:
       serviceAccountName: mock-device-plugin
       nodeSelector:
-        hardware-profile: accelerator-only
+        hardware-profile: accelerator
       hostNetwork: true
       containers:
       - name: mock-plugin

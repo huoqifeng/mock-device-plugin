@@ -100,9 +100,11 @@ func (dev *Devices) GetNodeDevices(n *corev1.Node) ([]*device.DeviceInfo, error)
 }
 
 func (dev *Devices) GetResource(n *corev1.Node) map[string]int {
-	resourceName := device.GetResourceName(dev.config.ResourceMemoryName)
+	memoryResourceName := device.GetResourceName(dev.config.ResourceMemoryName)
+	countResourceName := device.GetResourceName(dev.config.ResourceName)
 	resourceMap := map[string]int{
-		resourceName: 0,
+		memoryResourceName: 0,
+		countResourceName:  0,
 	}
 
 	// Skip health check in mock mode
@@ -128,7 +130,8 @@ func (dev *Devices) GetResource(n *corev1.Node) map[string]int {
 			klog.Infof("mock mode: generating %d Ascend NPU devices with %d MB memory each",
 				deviceCount, memoryPerDevice)
 
-			resourceMap[resourceName] = memoryPerDevice * deviceCount
+			resourceMap[memoryResourceName] = memoryPerDevice * deviceCount
+			resourceMap[countResourceName] = deviceCount
 			return resourceMap
 		} else {
 			klog.Infof("no device %s on this node", dev.config.CommonWord)
@@ -137,14 +140,16 @@ func (dev *Devices) GetResource(n *corev1.Node) map[string]int {
 	}
 
 	for _, val := range devInfos {
-		resourceMap[resourceName] += int(val.Devmem)
+		resourceMap[memoryResourceName] += int(val.Devmem)
 	}
 	if dev.config.MemoryFactor > 1 {
-		rawMemory := resourceMap[resourceName]
-		resourceMap[resourceName] /= int(dev.config.MemoryFactor)
-		klog.InfoS("Update memory", "raw", rawMemory, "after", resourceMap[resourceName], "factor", dev.config.MemoryFactor)
+		rawMemory := resourceMap[memoryResourceName]
+		resourceMap[memoryResourceName] /= int(dev.config.MemoryFactor)
+		klog.InfoS("Update memory", "raw", rawMemory, "after", resourceMap[memoryResourceName], "factor", dev.config.MemoryFactor)
 	}
-	klog.InfoS("Add resource", resourceName, resourceMap[resourceName])
+	// Set count resource based on number of devices found
+	resourceMap[countResourceName] = len(devInfos)
+	klog.InfoS("Add resource", memoryResourceName, resourceMap[memoryResourceName], countResourceName, resourceMap[countResourceName])
 	return resourceMap
 }
 
