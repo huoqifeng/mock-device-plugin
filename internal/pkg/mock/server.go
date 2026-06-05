@@ -18,7 +18,7 @@ package mock
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -81,7 +81,12 @@ func (p *MockPlugin) ListAndWatch(e *kubeletdevicepluginv1beta1.Empty, s kubelet
 		devs := make([]*kubeletdevicepluginv1beta1.Device, count)
 		for i := 0; i < count; i++ {
 			devs[i] = &kubeletdevicepluginv1beta1.Device{
-				ID:     fmt.Sprintf("mock-devices-id-%d", i),
+				// Use short numeric IDs to minimize gRPC message size.
+				// Memory resources can have large counts (e.g., 131072 for total MB),
+				// and the gRPC message must stay under kubelet's 4MB limit.
+				// Using "i" (1-6 chars) instead of "mock-devices-id-XXX" (18+ chars)
+				// reduces message size by ~60%, keeping 131072 devices at ~1.8MB.
+				ID:     strconv.Itoa(i),
 				Health: kubeletdevicepluginv1beta1.Healthy,
 			}
 		}

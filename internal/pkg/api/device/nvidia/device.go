@@ -260,16 +260,14 @@ func (dev *NvidiaGPUDevices) GetResource(n *corev1.Node) map[string]int {
 			klog.Infof("mock mode: generating %d devices with %d MB memory, %d cores each",
 				deviceCount, memoryPerDevice, coresPerDevice)
 
-			// For memory/core/percentage resources in mock mode, use device count
-			// instead of total MB/cores/percentage. The device plugin framework
-			// creates one Device object per count unit in ListAndWatch. Using total
-			// values (e.g., 32768 MB) would create too many Device objects and
-			// exceed kubelet's 4MB gRPC message limit.
-			resourceMap[memoryResourceName] = deviceCount
-			resourceMap[coreResourceName] = deviceCount
-			resourceMap[memoryPercentageName] = deviceCount
-			// Volcano GPU resources: use device count for memory too
-			resourceMap[VolcanoGPUResource] = deviceCount
+			for i := 0; i < deviceCount; i++ {
+				resourceMap[memoryResourceName] += memoryPerDevice
+				resourceMap[coreResourceName] += coresPerDevice
+				resourceMap[memoryPercentageName] += 100
+				// Add Volcano GPU resources
+				resourceMap[VolcanoGPUResource] += memoryPerDevice
+			}
+			// Set Volcano GPU number (total GPU count)
 			resourceMap[VolcanoGPUNumber] = deviceCount
 		} else {
 			klog.Infof("no device %s on this node", NvidiaGPUCommonWord)

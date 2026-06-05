@@ -130,11 +130,7 @@ func (dev *Devices) GetResource(n *corev1.Node) map[string]int {
 			klog.Infof("mock mode: generating %d Ascend NPU devices with %d MB memory each",
 				deviceCount, memoryPerDevice)
 
-			// For memory resources in mock mode, use device count instead of total MB.
-			// The device plugin framework creates one Device object per count unit in
-			// ListAndWatch. Using total MB (e.g., 131072) would create too many Device
-			// objects and exceed kubelet's 4MB gRPC message limit.
-			resourceMap[memoryResourceName] = deviceCount
+			resourceMap[memoryResourceName] = memoryPerDevice * deviceCount
 			resourceMap[countResourceName] = deviceCount
 			return resourceMap
 		} else {
