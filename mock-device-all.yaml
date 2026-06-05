@@ -125,10 +125,19 @@ spec:
     metadata:
       labels:
         name: mock-device-plugin
+        app.kubernetes.io/component: mock-device-plugin
     spec:
       serviceAccountName: mock-device-plugin
-      nodeSelector:
-        hardware-profile: accelerator
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: accelerator
+                operator: In
+                values:
+                - nvidia
+                - huawei-Ascend910
       hostNetwork: true
       containers:
       - name: mock-plugin

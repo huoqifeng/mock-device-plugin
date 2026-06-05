@@ -17,10 +17,12 @@ limitations under the License.
 package config
 
 import (
+	"context"
 	"flag"
 	"os"
 
 	"gopkg.in/yaml.v2"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/HAMi/mock-device-plugin/internal/pkg/api/device"
@@ -35,6 +37,7 @@ import (
 	"github.com/HAMi/mock-device-plugin/internal/pkg/api/device/metax"
 	"github.com/HAMi/mock-device-plugin/internal/pkg/api/device/mthreads"
 	"github.com/HAMi/mock-device-plugin/internal/pkg/api/device/nvidia"
+	"github.com/HAMi/mock-device-plugin/internal/pkg/util/client"
 )
 
 type Config struct {
@@ -70,41 +73,89 @@ func LoadConfig(path string) (*Config, error) {
 	return &yamlData, nil
 }
 
+// getAcceleratorLabel reads the "accelerator" label from the current node.
+// Returns the label value and true if found, or empty string and false otherwise.
+func getAcceleratorLabel() (string, bool) {
+	nodeName := os.Getenv("NODE_NAME")
+	if nodeName == "" {
+		klog.Warning("NODE_NAME env not set, cannot determine accelerator type")
+		return "", false
+	}
+
+	kubeClient := client.GetClient()
+	node, err := kubeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+	if err != nil {
+		klog.Errorf("Failed to get node %s: %v", nodeName, err)
+		return "", false
+	}
+
+	val, found := node.Labels["accelerator"]
+	if !found {
+		klog.Infof("Node %s does not have 'accelerator' label", nodeName)
+		return "", false
+	}
+
+	klog.Infof("Node %s has accelerator label: %s", nodeName, val)
+	return val, true
+}
+
 func InitDevicesWithConfig(config *Config) error {
 	device.DevicesMap = make(map[string]device.Devices)
-	/*amdDevice := amd.InitAMDDevice(config.AMDGPUConfig)
-	if amdDevice != nil {
-		device.DevicesMap[amdDevice.CommonWord()] = amdDevice
-	}*/
-	for _, dev := range ascend.InitDevices(config.VNPUs) {
-		commonWord := dev.CommonWord()
-		device.DevicesMap[commonWord] = dev
-		klog.Infof("Ascend device %s initialized", commonWord)
+
+	// Determine which devices to initialize based on the "accelerator" node label
+	acceleratorType, hasLabel := getAcceleratorLabel()
+
+	if !hasLabel {
+		klog.Warning("No accelerator label found on node, initializing all configured devices")
+		// Fallback: initialize all configured devices (original behavior)
+		for _, dev := range ascend.InitDevices(config.VNPUs) {
+			commonWord := dev.CommonWord()
+			device.DevicesMap[commonWord] = dev
+			klog.Infof("Ascend device %s initialized", commonWord)
+		}
+		hygonDevice := hygon.InitDCUDevice(config.HygonConfig)
+		if hygonDevice != nil {
+			device.DevicesMap[hygonDevice.CommonWord()] = hygonDevice
+		}
+		nvidiaDevice := nvidia.InitNvidiaDevice(config.NvidiaConfig)
+		if nvidiaDevice != nil {
+			device.DevicesMap[nvidiaDevice.CommonWord()] = nvidiaDevice
+		}
+		return nil
 	}
-	/*awsNeuronDevice := awsneuron.InitAWSNeuronDevice(config.AWSNeuronConfig)
-	if awsNeuronDevice != nil {
-		device.DevicesMap[awsNeuronDevice.CommonWord()] = awsNeuronDevice
+
+	// Only initialize devices matching the accelerator label
+	switch acceleratorType {
+	case "nvidia":
+		klog.Info("Accelerator type is nvidia, initializing NVIDIA GPU devices only")
+		nvidiaDevice := nvidia.InitNvidiaDevice(config.NvidiaConfig)
+		if nvidiaDevice != nil {
+			device.DevicesMap[nvidiaDevice.CommonWord()] = nvidiaDevice
+		}
+	case "huawei-Ascend910":
+		klog.Info("Accelerator type is huawei-Ascend910, initializing Ascend VNPU devices only")
+		for _, dev := range ascend.InitDevices(config.VNPUs) {
+			commonWord := dev.CommonWord()
+			device.DevicesMap[commonWord] = dev
+			klog.Infof("Ascend device %s initialized", commonWord)
+		}
+	default:
+		klog.Warningf("Unknown accelerator type %q, initializing all configured devices", acceleratorType)
+		for _, dev := range ascend.InitDevices(config.VNPUs) {
+			commonWord := dev.CommonWord()
+			device.DevicesMap[commonWord] = dev
+			klog.Infof("Ascend device %s initialized", commonWord)
+		}
+		hygonDevice := hygon.InitDCUDevice(config.HygonConfig)
+		if hygonDevice != nil {
+			device.DevicesMap[hygonDevice.CommonWord()] = hygonDevice
+		}
+		nvidiaDevice := nvidia.InitNvidiaDevice(config.NvidiaConfig)
+		if nvidiaDevice != nil {
+			device.DevicesMap[nvidiaDevice.CommonWord()] = nvidiaDevice
+		}
 	}
-	cambriconDevice := cambricon.InitMLUDevice(config.CambriconConfig)
-	if cambriconDevice != nil {
-		device.DevicesMap[cambriconDevice.CommonWord()] = cambriconDevice
-	}
-	enflameDevice := enflame.InitEnflameVGCUDevice(config.EnflameConfig)
-	if enflameDevice != nil {
-		device.DevicesMap[enflameDevice.CommonWord()] = enflameDevice
-	}
-	kunlunDevice := kunlun.InitKunlunVDevice(config.KunlunConfig)
-	if kunlunDevice != nil {
-		device.DevicesMap[kunlunDevice.CommonWord()] = kunlunDevice
-	}*/
-	hygonDevice := hygon.InitDCUDevice(config.HygonConfig)
-	if hygonDevice != nil {
-		device.DevicesMap[hygonDevice.CommonWord()] = hygonDevice
-	}
-	nvidiaDevice := nvidia.InitNvidiaDevice(config.NvidiaConfig)
-	if nvidiaDevice != nil {
-		device.DevicesMap[nvidiaDevice.CommonWord()] = nvidiaDevice
-	}
+
 	return nil
 }
 
