@@ -19,19 +19,11 @@ package mock
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"k8s.io/klog/v2"
 	kubeletdevicepluginv1beta1 "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
-)
-
-const (
-	// maxMemoryDeviceCount is the maximum number of Device objects to create
-	// for memory-type resources. Memory resources use large count values (e.g.,
-	// 131072 for total MB) that would exceed kubelet's 4MB gRPC message limit.
-	maxMemoryDeviceCount = 128
 )
 
 // Plugin is identical to DevicePluginServer interface of device plugin API.
@@ -86,26 +78,14 @@ func (p *MockPlugin) GetPreferredAllocation(context.Context, *kubeletdeviceplugi
 func (p *MockPlugin) ListAndWatch(e *kubeletdevicepluginv1beta1.Empty, s kubeletdevicepluginv1beta1.DevicePlugin_ListAndWatchServer) error {
 	for {
 		count := p.GetCount()
-		// For memory-type resources, the count value represents total MB
-		// (e.g., 131072 for 4x32768MB Ascend910-memory), not the number of
-		// physical devices. Creating that many Device objects would exceed
-		// kubelet's gRPC max message size (4MB), causing the plugin to be
-		// deregistered. Limit the device count to a reasonable number for
-		// memory-type resources to avoid gRPC message size overflow.
-		deviceCount := count
-		if isMemoryResource(p.ManagedResource) && count > maxMemoryDeviceCount {
-			deviceCount = maxMemoryDeviceCount
-			klog.Infof("Limiting memory resource %s device count from %d to %d to avoid gRPC message overflow",
-				p.ManagedResource, count, deviceCount)
-		}
-		devs := make([]*kubeletdevicepluginv1beta1.Device, deviceCount)
-		for i := 0; i < deviceCount; i++ {
+		devs := make([]*kubeletdevicepluginv1beta1.Device, count)
+		for i := 0; i < count; i++ {
 			devs[i] = &kubeletdevicepluginv1beta1.Device{
 				ID:     fmt.Sprintf("mock-devices-id-%d", i),
 				Health: kubeletdevicepluginv1beta1.Healthy,
 			}
 		}
-		klog.Infoln("Device Registered", p.ManagedResource, deviceCount)
+		klog.Infoln("Device Registered", p.ManagedResource, count)
 		s.Send(&kubeletdevicepluginv1beta1.ListAndWatchResponse{Devices: devs})
 		time.Sleep(time.Second * 10)
 	}
@@ -130,12 +110,4 @@ func (p *MockPlugin) GetCount() int {
 
 func (p *MockPlugin) SetCount(count int) {
 	p.count.Store(int64(count))
-}
-
-// isMemoryResource checks if the resource name represents a memory-type resource.
-// Memory resources have count values in MB (e.g., 131072) rather than device counts,
-// and need special handling to avoid creating too many Device objects.
-func isMemoryResource(resourceName string) bool {
-	return strings.Contains(strings.ToLower(resourceName), "memory") ||
-		strings.Contains(strings.ToLower(resourceName), "mem")
 }

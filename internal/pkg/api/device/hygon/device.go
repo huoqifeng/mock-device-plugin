@@ -117,14 +117,17 @@ func (dev *DCUDevices) GetResource(n *corev1.Node) map[string]int {
 		if dev.config.MockModeSkipHealthCheck && dev.config.DefaultDeviceNum > 0 {
 			deviceCount := int(dev.config.DefaultDeviceNum)
 			memoryPerDevice := int(dev.config.DefaultMemory)
-			coresPerDevice := 30 // Default cores
 
 			klog.Infof("mock mode: generating %d DCU devices with %d MB memory each",
 				deviceCount, memoryPerDevice)
 
-			resourceMap[memoryResourceName] = memoryPerDevice * deviceCount
+			// For memory/core resources in mock mode, use device count instead of
+			// total MB/cores. The device plugin framework creates one Device object
+			// per count unit in ListAndWatch. Using total values would create too
+			// many Device objects and exceed kubelet's 4MB gRPC message limit.
+			resourceMap[memoryResourceName] = deviceCount
 			if coreResourceName != "" {
-				resourceMap[coreResourceName] = coresPerDevice * deviceCount
+				resourceMap[coreResourceName] = deviceCount
 			}
 		} else {
 			klog.Infof("no device %s on this node", dev.CommonWord())
